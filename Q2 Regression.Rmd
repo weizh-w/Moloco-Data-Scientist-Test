@@ -1,0 +1,123 @@
+---
+title: "Q2 - Regression"
+author: "Weizhuo Wang"
+date: "2/23/2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r load data}
+df = readxl::read_xlsx("Adops & Data Scientist Sample Data.xlsx", 
+                        sheet = 2, col_names = c("A", "B", "C"))
+```
+
+Check missing values and variable distribution.
+
+```{r}
+sum(is.na(df))
+plot(df$A, main = "A")
+plot(df$B, main = "B")
+plot(df$C, main = "C")
+```
+
+By checking on distributions, there is a potential outlier.
+
+First fit a simple linear regression as initial model.
+
+```{r}
+mod0 = lm(C ~ A + B, data = df)
+summary(mod0)
+
+par(mfrow = c(2,2))
+plot(mod0)
+```
+
+Observation #201 is obviously an outlier, so remove it and run regression again.
+
+```{r}
+# df2[201,]  # see what 201 looks like
+df.modified = df[-201,]
+mod1 = lm(C ~ A + B, data = df.modified)
+summary(mod1)
+ppcor::pcor(df.modified[,1:2], method = "pearson")$estimate # no correlation between A and B
+
+par(mfrow = c(2,2))
+plot(mod1)
+```
+
+Regression model looks better, and there is no correlation between independent variables, can then start refining model. 
+
+```{r}
+plot(df.modified$C, main = "C")
+plot(df.modified$A, df.modified$C, main = "A vs. C")
+plot(df.modified$B, df.modified$C, main = "B vs. C")
+```
+
+Also notice a pattern change on variable C after 200 observations. To solve this, I create time variable (called `t`) to indicate the time of a point being recorded.
+
+For both independent variables, relation to C changes at point 0, therefor a dummy variable representing positive or negative may be useful (`IA` and `IB` respectively, with 1 means negative value of that variable). 
+
+```{r}
+df.modified$t = c(1:nrow(df.modified))
+df.modified$IA = as.factor(ifelse(df.modified$A<0, "1", "0"))
+df.modified$IB = as.factor(ifelse(df.modified$B<0, "1", "0"))
+```
+
+Fit model with all variables.
+
+```{r}
+mod2 = lm(C ~ ., df.modified) # put everything into expaintory variable
+summary(mod2)
+
+par(mfrow = c(2,2))
+plot(mod2)
+```
+
+Model performance is not very satisfactory. Here are some thoughts:
+
+- the negative value of A or B can influence the other, add interaction of `A*B` or `A*IB` may help explain more variance. However, adding both interaction forms may cause overfitting
+
+- time variable `t` influences all other independent variables, so we can add interaction of `t` and all others
+
+With the above ideas, add all variables and their interactions into a full model, then use model selection method (BIC) to choose important features.
+
+```{r}
+# this is the full model
+# use BIC method to reduce the size of full model
+mod3 = lm(C ~ A*B*t*IA*IB, df.modified) 
+mod3.re = MASS::stepAIC(mod3, direction = "backward", k = log(nrow(df.modified)), trace = 0)
+summary(mod3.re)
+
+par(mfrow = c(2,2))
+plot(mod3.re)
+```
+
+The selected model performance is excellent, it explains about 97% variation in variable C. However, there may exist overfitting.
+
+Even the reduced model still has tons of variables, intuitively, some variables seem not necessary. For example the interaction term between time and `IA`, time variable will use anyway no matter A takes positive or negative value. Therefore, I would delete some interaction terms regarding `IA` and `IB` and run model selection again.
+
+```{r}
+# this is the intuition model, again use BIC 
+mod4 = lm(C ~ A*B*t + IA:A + IA:B + IB:A + IB:B + A:B:IA + A:B:IB, data = df.modified) 
+mod4.re = MASS::stepAIC(mod4, direction = "backward", k = log(nrow(df.modified)), trace = 0)
+summary(mod4.re)
+
+par(mfrow = c(2,2))
+plot(mod3.re)
+```
+
+So this time, the model fits the data perfectly without being too complected, diagnosis plots are reasonableness acceptable. 
+
+Also notice that time variable is not used in the final model. Again, `IB` seems not useful, so try to delete more interaction terms to see result.
+
+```{r}
+mod5 = lm(C ~ A*B + A:B:IA, df.modified)
+summary(mod5)
+
+par(mfrow = c(2,2))
+plot(mod5)
+```
+
+This model is more ideal in terms of performance and interpretability with all diagnosis plots generally valid. Therefore, I choose it as my final regression mode. The model is written as 
+$$ C = \beta_0 + \beta_1A + \beta_2B + \beta_3A*B + \beta_4A*B*I_A + \epsilon $$
